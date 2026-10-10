@@ -1,8 +1,8 @@
-# Claude Provider
+# Claude Provider · Rust
 
 Switch between API providers for **Claude Code** and **Codex** from a terminal UI or the command line. Save your endpoints, keys, and model preferences once, then select a provider to update the tool's local configuration.
 
-Built with [Textual](https://github.com/Textualize/textual). The interface and command help are currently in Chinese.
+This is the **Rust implementation**, built with [Ratatui](https://ratatui.rs/) and [Crossterm](https://github.com/crossterm-rs/crossterm). The interface and command help are currently in Chinese. The Python implementation is available on the [`main` branch](https://github.com/f1sherb0y/claude-provider/tree/main).
 
 ## Features
 
@@ -15,45 +15,38 @@ Built with [Textual](https://github.com/Textualize/textual). The interface and c
 
 ## Installation
 
-Use **Python 3.11 or newer**, Git, and a terminal. Install Claude Code and/or Codex separately for the tools you want to configure.
+Use a recent **stable Rust toolchain** with Cargo (the project uses Rust edition 2024), Git, and a terminal. Install Rust through [rustup](https://rustup.rs/), and install Claude Code and/or Codex separately for the tools you want to configure.
 
-> The current package metadata lists Python 3.9+, but the code imports `tomllib`, which requires Python 3.11+.
-
-Install directly from this repository with [pipx](https://pipx.pypa.io/) using a Python 3.11+ interpreter:
+Install directly from the `rust` branch:
 
 ```sh
-pipx install git+https://github.com/f1sherb0y/claude-provider.git
+cargo install --git https://github.com/f1sherb0y/claude-provider.git --branch rust --locked claude-provider
 ccp
 ```
 
-`ccp` and `claude-provider` are equivalent commands. You can also run the package with `python -m claude_provider` in the environment where it is installed.
+The package is named `claude-provider` and installs the `ccp` executable. Cargo's bin directory must be on your `PATH` (normally `~/.cargo/bin`, or `%USERPROFILE%\.cargo\bin` on Windows).
 
 ### Install from source
 
 ```sh
-git clone https://github.com/f1sherb0y/claude-provider.git
+git clone --branch rust https://github.com/f1sherb0y/claude-provider.git
 cd claude-provider
-python -m venv .venv
-```
-
-Activate the environment:
-
-```powershell
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-```
-
-```sh
-# macOS / Linux
-source .venv/bin/activate
-```
-
-Then install and launch:
-
-```sh
-python -m pip install -e .
+cargo install --path . --locked
 ccp
 ```
+
+To build locally and run without installing:
+
+```sh
+cargo build --release --locked
+cargo run --release --locked
+```
+
+The compiled executable is `target/release/ccp` (`target\release\ccp.exe` on Windows). Once built, it runs without a Rust or Python runtime.
+
+### Existing Python installations
+
+The Rust implementation uses the same `~/.claude-provider/providers.json` state file and configuration directories as the Python implementation, including the older flat Claude-only state format. Back up your state before moving between versions. Both implementations use the command name `ccp`; check your `PATH` if the wrong one starts.
 
 ## Quick start
 
@@ -225,8 +218,18 @@ Existing target files are backed up before modification, with the newest **20 ba
 
 ## Troubleshooting
 
-- **`No module named 'tomllib'`:** Reinstall using Python 3.11 or newer.
-- **`ccp` is not found:** Activate the virtual environment used for installation, or run `pipx ensurepath` and reopen your terminal if you installed with pipx.
+- **Cargo reports an unsupported edition or compiler version:** Update the stable toolchain with `rustup update stable` and build with that toolchain.
+- **`ccp` is not found:** Add Cargo's bin directory to your `PATH` and reopen your terminal, or run the executable from `target/release` after building locally.
 - **Clipboard import does not work:** Paste the snippet into the editor's top box or use standard input with `add -`.
 - **A switch is not reflected in your tool:** Start a new session and check that both the utility and the tool use the same configuration directory. Check for overrides in the shell or other tool configuration.
 - **The current provider is unknown:** The active configuration may not match a saved entry. Import it explicitly or reapply a saved provider. Initial discovery runs when backend state is first created; it does not continuously import later edits.
+
+## Development
+
+```sh
+cargo test --locked --all-targets
+cargo build --release --locked
+cargo run --locked -- --help
+```
+
+`Cargo.lock` is committed so builds can use the recorded dependency versions. The source is organized into CLI (`src/cli.rs`), shared provider/state handling (`src/backend.rs`, `src/store.rs`, and `src/common.rs`), tool backends (`src/claude.rs` and `src/codex.rs`), and terminal UI (`src/tui/`).

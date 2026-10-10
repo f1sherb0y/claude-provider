@@ -1,0 +1,31 @@
+[package]
+name = "claude-provider"
+version = "0.3.0"
+edition = "2024"
+description = "TUI to quickly switch Claude Code / Codex API providers"
+
+[[bin]]
+name = "ccp"
+path = "src/main.rs"
+
+[dependencies]
+chrono = "0.4"
+clap = { version = "4.6", features = ["derive"] }
+crossterm = "0.29"
+indexmap = "2"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+regex = "1.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml_edit = "0.25"
+unicode-width = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
