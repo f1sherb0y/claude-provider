@@ -307,20 +307,106 @@ func TestCodexEditConfig(t *testing.T) {
 			"\"model_provider\" = \"nowcoding\"\r\nmodel = \"gpt-5-codex\"\r\n\r\n[\"model_providers\".\"nowcoding\"]\r\n\"name\" = \"New \\\"q\\\" 全球\"\r\nbase_url = \"https://nowcoding.ai/v1\"\r\nwire_api = \"responses\"\r\nexperimental_bearer_token = \"sk-abc\\\\x\"\r\n"},
 		{"no trailing newline", "approval = \"never\"", login, "model_provider = \"openai\"\napproval = \"never\""},
 	}
+	plain := &Backend{Tool: ToolCodex, Shadowed: NewOMap[any](), ConfigShadowed: NewOMap[any]()}
 	for _, c := range cases {
-		got, err := codexEditConfig(c.src, c.p)
+		got, _, _, err := codexEditConfig(c.src, plain, c.p)
 		if err != nil {
 			t.Errorf("%s: %v", c.name, err)
 		} else if got != c.want {
 			t.Errorf("%s:\n got: %q\nwant: %q", c.name, got, c.want)
 		}
 	}
-	if _, err := codexEditConfig("model_providers = { x = { name = \"X\", base_url = \"u\" } }\n", relay); err == nil {
+	if _, _, _, err := codexEditConfig("model_providers = { x = { name = \"X\", base_url = \"u\" } }\n", plain, relay); err == nil {
 		t.Error("inline model_providers: expected an error")
 	}
-	if _, err := codexEditConfig("not toml [", relay); err == nil {
+	if _, _, _, err := codexEditConfig("not toml [", plain, relay); err == nil {
 		t.Error("invalid file: expected an error")
 	}
+}
+
+// A provider's extra settings are written on the way in and undone on the way out,
+// whatever the keys are.
+func TestCodexExtraConfig(t *testing.T) {
+	dir := sandbox(t)
+	cfg := filepath.Join(dir, "codex", "config.toml")
+	base := "model_provider = \"openai\"\n\"model_reasoning_effort\" = \"high\" # mine\n\n[\"features\"]\napps = false\n\"context_management\" = false\n\n[\"features\".token_budget]\nenabled = false\nuse_history_notes_extension = false\n\n[tui]\nx = 1\n"
+	write(t, cfg, base)
+	store, err := LoadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	krill := codexProvider("name", "Krill", "base_url", "https://krill.example/backend-api/codex", "key", "k")
+	krill.SetDict("extra_config", dictOf(
+		"features.context_management", "true",
+		"features.token_budget.enabled", "true",
+		"features.token_budget.use_history_notes_extension", "true",
+		"model_reasoning_effort", "medium", // not valid TOML on its own: becomes a string
+		"features.brand_new.limits", "{ a = 1, b = [2, 3] }", // a key nobody has heard of
+		"shell_environment_policy.inherit", `"core"`,
+	))
+	store.Upsert(ToolCodex, krill, -1)
+	store.Upsert(ToolCodex, codexProvider("name", "kiov", "base_url", "https://api.kiov.xin/v1", "key", "sk-k"), -1)
+
+	use(t, store, "Krill")
+	eq(t, read(t, cfg), "model_provider = \"krill\"\n\"model_reasoning_effort\" = \"medium\" # mine\n\n[\"features\"]\napps = false\n\"context_management\" = true\n\n[\"features\".token_budget]\nenabled = true\nuse_history_notes_extension = true\n\n[tui]\nx = 1\n\n"+
+		"[model_providers.krill]\nname = \"Krill\"\nbase_url = \"https://krill.example/backend-api/codex\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"k\"\n\n"+
+		"[features.brand_new]\nlimits = { a = 1, b = [2, 3] }\n\n[shell_environment_policy]\ninherit = \"core\"\n")
+
+	// applying it again is a no-op, also after a restart
+	store, err = LoadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := read(t, cfg)
+	use(t, store, "Krill")
+	eq(t, read(t, cfg), before)
+
+	// leaving puts every key back: old values return, keys and tables we added go
+	use(t, store, "kiov")
+	tables := "[model_providers.krill]\nname = \"Krill\"\nbase_url = \"https://krill.example/backend-api/codex\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"k\"\n\n" +
+		"[model_providers.kiov]\nname = \"kiov\"\nbase_url = \"https://api.kiov.xin/v1\"\nwire_api = \"responses\"\nexperimental_bearer_token = \"sk-k\"\n"
+	eq(t, read(t, cfg), strings.Replace(base, `"openai"`, `"kiov"`, 1)+"\n"+tables)
+	use(t, store, "OpenAI")
+	eq(t, read(t, cfg), base+"\n"+tables)
+
+	// keys the provider itself owns are refused, and nothing is written
+	bad := codexProvider("name", "bad", "base_url", "https://bad/v1", "key", "k")
+	bad.SetDict("extra_config", dictOf("model_providers.bad.name", `"x"`))
+	i, _ := store.Upsert(ToolCodex, bad, -1)
+	if _, err := store.Apply(ToolCodex, i); err == nil {
+		t.Error("expected an error")
+	}
+	eq(t, read(t, cfg), base+"\n"+tables)
+}
+
+func TestCliSet(t *testing.T) {
+	sandbox(t)
+	store, err := LoadStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Upsert(ToolCodex, codexProvider("name", "Krill", "base_url", "https://krill.example/v1", "key", "k"), -1)
+	a, err := parseAddArgs([]string{"krill", "--config", "features.token_budget.enabled=true", "--config=a.b = [1, 2]", "--env", "X=1", "--model", "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := store.Get(ToolCodex)
+	if err := cliSet(store, ToolCodex, b.Find(a.text), a); err != nil {
+		t.Fatal(err)
+	}
+	p := b.Providers[b.Find("Krill")]
+	eq(t, dictText(p.Dict("extra_config")), "features.token_budget.enabled=true\na.b=[1, 2]")
+	eq(t, dictText(p.Dict("extra_env")), "X=1")
+	eq(t, p.Model(), "m")
+	eq(t, p.Key(), "k")
+	a, _ = parseAddArgs([]string{"krill", "--unset-config", "a.b", "--unset-env", "X", "--model", ""})
+	if err := cliSet(store, ToolCodex, b.Find("Krill"), a); err != nil {
+		t.Fatal(err)
+	}
+	p = b.Providers[b.Find("Krill")]
+	eq(t, dictText(p.Dict("extra_config")), "features.token_budget.enabled=true")
+	eq(t, p.Dict("extra_env").Len(), 0)
+	eq(t, p.Model(), "")
 }
 
 // ---------------------------------------------------------------- codex switching

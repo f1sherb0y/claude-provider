@@ -154,10 +154,13 @@ type Backend struct {
 	// env keys the active provider wrote, and the user values it overrode
 	AppliedKeys []string
 	Shadowed    *JObj
+	// the same for config-file keys (Codex): old values are TOML source, null = was absent
+	ConfigApplied  []string
+	ConfigShadowed *JObj
 }
 
 func NewBackend(tool Tool, state any) (*Backend, error) {
-	b := &Backend{Tool: tool, Shadowed: NewOMap[any]()}
+	b := &Backend{Tool: tool, Shadowed: NewOMap[any](), ConfigShadowed: NewOMap[any]()}
 	switch s := state.(type) {
 	case *JObj:
 		b.loadState(s)
@@ -220,6 +223,14 @@ func (b *Backend) loadState(state *JObj) {
 	if m, ok := state.m["shadowed"].(*JObj); ok {
 		b.Shadowed = m.Clone()
 	}
+	if arr, ok := state.m["applied_config"].([]any); ok {
+		for _, e := range arr {
+			b.ConfigApplied = append(b.ConfigApplied, jsonText(e))
+		}
+	}
+	if m, ok := state.m["shadowed_config"].(*JObj); ok {
+		b.ConfigShadowed = m.Clone()
+	}
 }
 
 func (b *Backend) dumpState() *JObj {
@@ -237,6 +248,14 @@ func (b *Backend) dumpState() *JObj {
 		}
 		m.Set("applied_keys", keys)
 		m.Set("shadowed", b.Shadowed)
+	}
+	if len(b.ConfigApplied) > 0 {
+		keys := make([]any, len(b.ConfigApplied))
+		for i, k := range b.ConfigApplied {
+			keys[i] = k
+		}
+		m.Set("applied_config", keys)
+		m.Set("shadowed_config", b.ConfigShadowed)
 	}
 	return m
 }
@@ -341,7 +360,8 @@ func (b *Backend) FindSame(p *Provider) int {
 	url := strings.TrimRight(p.BaseURL(), "/")
 	for i, q := range b.Providers {
 		if strings.TrimRight(q.BaseURL(), "/") == url && q.Key() == p.Key() &&
-			dictEqual(q.Dict("extra_env"), p.Dict("extra_env")) {
+			dictEqual(q.Dict("extra_env"), p.Dict("extra_env")) &&
+			dictEqual(q.Dict("extra_config"), p.Dict("extra_config")) {
 			return i
 		}
 	}

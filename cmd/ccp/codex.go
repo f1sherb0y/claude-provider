@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -25,6 +26,7 @@ var codexFields = []Field{
 	{Name: "model", Label: "model", Placeholder: "可选，留空 = 不改当前模型"},
 	{Name: "env_key", Label: "env_key", Placeholder: "可选，填了则 Key 写入 ~/.codex/.env"},
 	{Name: "extra_env", Label: "额外 env", Kind: KindDict, Placeholder: "每行 KEY=VALUE，写入 ~/.codex/.env（代理、证书等）"},
+	{Name: "extra_config", Label: "额外配置", Kind: KindDict, Placeholder: "每行 键=TOML值，写入 config.toml，切走时还原，如 features.x.enabled=true"},
 }
 
 const codexPasteHint = "[model_providers.x] TOML / export OPENAI_* / JSON / URL+Key"
@@ -225,7 +227,7 @@ func codexApply(b *Backend, idx int) (string, error) {
 	}
 
 	// work everything out first, so a problem leaves all three files untouched
-	newSrc, err := codexEditConfig(src, p)
+	newSrc, cfgApplied, cfgShadowed, err := codexEditConfig(src, b, p)
 	if err != nil {
 		return "", err
 	}
@@ -258,63 +260,124 @@ func codexApply(b *Backend, idx int) (string, error) {
 		}
 	}
 	b.AppliedKeys, b.Shadowed = applied, shadowed
+	b.ConfigApplied, b.ConfigShadowed = cfgApplied, cfgShadowed
 	return note, nil
 }
 
-// codexEditConfig returns config.toml with the provider selected.
-func codexEditConfig(src string, p *Provider) (string, error) {
+// codexWant lists what an endpoint's provider table must say, and the key it must not have.
+func codexWant(p *Provider) (id string, want map[string]string, drop string) {
+	id, want = codexBuiltin, map[string]string{}
+	if isLogin(p) {
+		return id, want, ""
+	}
+	id = p.S("id")
+	want["name"], want["base_url"], want["wire_api"] = p.Name(), p.BaseURL(), p.S("wire_api")
+	drop = "env_key"
+	if envKey := p.S("env_key"); envKey != "" {
+		want["env_key"], drop = envKey, "experimental_bearer_token"
+	} else {
+		want["experimental_bearer_token"] = p.Key()
+	}
+	return id, want, drop
+}
+
+// codexEditConfig returns config.toml with the provider selected, plus the
+// bookkeeping for its extra settings: which keys it set and what they held before
+// (TOML source, or nil when the key did not exist).
+func codexEditConfig(src string, b *Backend, p *Provider) (string, []string, *JObj, error) {
+	fail := func(err error) (string, []string, *JObj, error) { return "", nil, nil, err }
 	doc, err := parseTOML(src)
 	if err != nil {
-		return "", err
+		return fail(err)
 	}
-	id := codexBuiltin
-	want := map[string]string{}
+
+	// 1. put back what the previous provider's extra settings replaced
+	for i := len(b.ConfigApplied) - 1; i >= 0; i-- {
+		key := b.ConfigApplied[i]
+		path, err := parseKeyPath(key)
+		if err != nil {
+			continue // cannot have been applied
+		}
+		if prev, ok := b.ConfigShadowed.m[key].(string); ok {
+			err = doc.SetRaw(path, prev)
+		} else {
+			err = doc.RemovePruning(path)
+		}
+		if err != nil {
+			return fail(err)
+		}
+	}
+
+	// 2. the provider itself
+	id, want, drop := codexWant(p)
 	if !isLogin(p) {
-		id = p.S("id")
 		table := []string{"model_providers", id}
 		// update in place so unrelated keys (env_key_instructions, headers, ...) survive
-		want["name"], want["base_url"], want["wire_api"] = p.Name(), p.BaseURL(), p.S("wire_api")
-		drop := "env_key"
-		if envKey := p.S("env_key"); envKey != "" {
-			want["env_key"], drop = envKey, "experimental_bearer_token"
-		} else {
-			want["experimental_bearer_token"] = p.Key()
-		}
 		for _, k := range []string{"name", "base_url", "wire_api", "env_key", "experimental_bearer_token"} {
 			if v, ok := want[k]; ok {
 				if err := doc.SetString(append(slices.Clone(table), k), v); err != nil {
-					return "", err
+					return fail(err)
 				}
 			}
 		}
 		if err := doc.Remove(append(slices.Clone(table), drop)); err != nil {
-			return "", err
+			return fail(err)
 		}
 	}
 	// written out even for the built-in provider: tools that manage a login
 	// (and people reading the file) want to see which provider is selected
 	if err := doc.SetString([]string{"model_provider"}, id); err != nil {
-		return "", err
+		return fail(err)
 	}
 	if p.Model() != "" {
 		if err := doc.SetString([]string{"model"}, p.Model()); err != nil {
-			return "", err
+			return fail(err)
 		}
+	}
+
+	// 3. its extra settings: any key, any TOML value; we do not interpret them
+	extra := p.Dict("extra_config")
+	shadowed := NewOMap[any]()
+	wantExtra := map[string]any{}
+	for _, key := range extra.Keys() {
+		path, err := parseKeyPath(key)
+		if err != nil {
+			return fail(fmt.Errorf("额外配置 %s: %w", key, err))
+		}
+		if path[0] == "model_provider" || path[0] == "model_providers" {
+			return fail(fmt.Errorf("额外配置不能设置 %s（由 provider 本身决定）", key))
+		}
+		text, _ := extra.Get(key)
+		raw, value := tomlValue(text)
+		if prev, ok := doc.Raw(path); ok {
+			shadowed.Set(key, prev)
+		} else {
+			shadowed.Set(key, nil)
+		}
+		if err := doc.SetRaw(path, raw); err != nil {
+			return fail(fmt.Errorf("额外配置 %s: %w", key, err))
+		}
+		wantExtra[key] = value
 	}
 
 	// never write a file that does not say what we meant
 	m, err := tomlLoad(doc.src)
 	if err != nil {
-		return "", fmt.Errorf("生成的 config.toml 无效，未写入: %w", err)
+		return fail(fmt.Errorf("生成的 config.toml 无效，未写入: %w", err))
 	}
 	ok := tomlStr(m, "model_provider") == id && (p.Model() == "" || tomlStr(m, "model") == p.Model())
 	for k, v := range want {
 		ok = ok && tomlStr(m, "model_providers", id, k) == v
 	}
-	if !ok {
-		return "", errors.New("生成的 config.toml 与预期不符，未写入")
+	for key, value := range wantExtra {
+		path, _ := parseKeyPath(key)
+		got, found := tomlGet(m, path...)
+		ok = ok && found && reflect.DeepEqual(got, value)
 	}
-	return doc.src, nil
+	if !ok {
+		return fail(errors.New("生成的 config.toml 与预期不符，未写入"))
+	}
+	return doc.src, slices.Clone(extra.Keys()), shadowed, nil
 }
 
 // ---------------------------------------------------------------- .env

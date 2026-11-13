@@ -11,6 +11,7 @@ This is the **Go implementation**, built on [tcell](https://github.com/gdamore/t
 - Import provider details from the clipboard, JSON, environment-variable snippets, or Codex TOML.
 - Import existing provider settings on first launch and keep entries for official login.
 - Give a provider its own environment variables (proxy, CA bundle, ...), for both tools.
+- Give a Codex provider its own `config.toml` settings — any key, including ones this utility has never heard of — which are undone when you switch away.
 - Keep a separate Codex login (`auth.json`) per login-type provider, so a local-proxy gateway and the real ChatGPT login can coexist.
 - Back up configuration files before changing them and leave unrelated settings, comments, and formatting alone.
 
@@ -85,6 +86,8 @@ ccp use 2                        # Switch by the 1-based list position
 ccp -x list
 ccp -x use "My Codex"
 ccp rm "Old provider"             # Remove a saved entry immediately
+ccp -x set "My Codex" --model "OTHER_MODEL" --config features.some_flag=true
+                                 # Change fields of a saved entry (see ccp set --help)
 ccp --help
 ccp add --help
 ```
@@ -107,6 +110,7 @@ ccp -x add --name "My Codex" --url "https://api.example.com/v1" --key "YOUR_API_
 | `--key` | Set the API key or token |
 | `--model` | Set an optional model |
 | `--env KEY=VALUE` | Add an environment variable the provider needs (repeatable) |
+| `--config KEY=VALUE` | Codex: add a `config.toml` setting the provider needs (repeatable) |
 | `--use` | Activate the resulting provider |
 
 Explicit options override parsed values. An endpoint needs both a URL and a key. A provider given only `--env` values is a *login-type* provider: the tool keeps using its built-in endpoint and sign-in, with those variables set. Adding a provider identical to a saved one reuses the existing entry.
@@ -151,6 +155,20 @@ Switching touches up to three files in `~/.codex`:
 | `config.toml` | `model_provider` is set to the provider's ID (`openai` for a login-type provider), and an endpoint's `[model_providers.<id>]` table is created or updated in place. A nonempty provider model sets the top-level `model`. Edits are made on the text of the file: comments, ordering, and every other setting stay as they are, and the result is re-parsed and checked before it is written. |
 | `.env` | The provider's extra variables are written into a `# BEGIN ccp (managed)` block. Variables that belonged to another saved provider are removed — including identical lines that provider's own installer wrote — and values of yours that they had overridden are restored. A provider with `env_key` gets its key here instead of in `config.toml`. |
 | `auth.json` | Only for login-type providers; see below. |
+
+#### Provider-specific settings
+
+Some settings only make sense with one provider — a feature flag whose backend only that provider implements, a different reasoning effort, a model catalog URL. Put them in the provider's **额外配置** box (or `--config`), one `key = value` per line:
+
+```
+features.token_budget.enabled = true
+features.token_budget.use_history_notes_extension = true
+model_reasoning_effort = medium
+```
+
+The key is a dotted path into `config.toml` (quote parts that contain dots); the value is any TOML value — `true`, `42`, `"text"`, `[1, 2]`, `{ a = 1 }` — and anything that is not valid TOML is taken as a string. The utility does not interpret these settings, so new Codex options work without an update.
+
+Switching to the provider writes each setting and remembers what was there; switching away puts the old value back, or removes the key (and a table left empty by that) if it did not exist. For a setting to be *off* everywhere else, leave it off or absent in `config.toml` itself. `model_provider` and `model_providers.*` cannot be set this way.
 
 Codex URLs have a trailing `/responses` or `/chat/completions` removed. `wire_api` defaults to `responses`. Tables of providers you are not using are left in `config.toml`.
 

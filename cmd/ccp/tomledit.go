@@ -401,13 +401,27 @@ func (d *tomlDoc) insert(at int, text string) error {
 
 // SetString sets the string at path, creating the key (and its table) if needed.
 func (d *tomlDoc) SetString(path []string, value string) error {
+	return d.SetRaw(path, tomlQuote(value))
+}
+
+// Raw returns the source text of the value at path.
+func (d *tomlDoc) Raw(path []string) (string, bool) {
 	if kv := d.find(path); kv != nil {
-		d.src = d.src[:kv.valStart] + tomlQuote(value) + d.src[kv.valEnd:]
+		return d.src[kv.valStart:kv.valEnd], true
+	}
+	return "", false
+}
+
+// SetRaw sets the value at path to raw (TOML source for a value), creating the
+// key (and its table) if needed.
+func (d *tomlDoc) SetRaw(path []string, raw string) error {
+	if kv := d.find(path); kv != nil {
+		d.src = d.src[:kv.valStart] + raw + d.src[kv.valEnd:]
 		return d.rescan()
 	}
 	nl := d.newline()
 	parent, key := path[:len(path)-1], path[len(path)-1]
-	line := tomlKey(key) + " = " + tomlQuote(value) + nl
+	line := tomlKey(key) + " = " + raw + nl
 	if len(parent) == 0 {
 		return d.insertRoot(key, line)
 	}
@@ -476,6 +490,56 @@ func (d *tomlDoc) Remove(path []string) error {
 	}
 	d.src = d.src[:kv.start] + d.src[kv.end:]
 	return d.rescan()
+}
+
+// RemovePruning deletes the key at path and, if that leaves its table with
+// nothing in it, the table's header as well.
+func (d *tomlDoc) RemovePruning(path []string) error {
+	if err := d.Remove(path); err != nil {
+		return err
+	}
+	parent := path[:len(path)-1]
+	h := d.header(parent)
+	if h < 0 {
+		return nil
+	}
+	for i, s := range d.stmts {
+		if i != h && s.kind != stmtOther && hasPrefix(s.path, parent) {
+			return nil // a key or a sub-table still lives there
+		}
+	}
+	start := d.stmts[h].start
+	if h > 0 && strings.TrimSpace(d.src[d.stmts[h-1].start:d.stmts[h-1].end]) == "" {
+		start = d.stmts[h-1].start // the blank line that set the table apart
+	}
+	d.src = d.src[:start] + d.src[d.stmts[h].end:]
+	return d.rescan()
+}
+
+// parseKeyPath reads a dotted key such as `features."a.b".c`.
+func parseKeyPath(key string) ([]string, error) {
+	path, end, err := scanKeyPath(key, 0)
+	if err != nil {
+		return nil, err
+	}
+	if end != len(key) {
+		return nil, fmt.Errorf("无法解析的键: %s", key)
+	}
+	return path, nil
+}
+
+// tomlValue turns what a user typed into TOML source for a value: valid TOML
+// (true, 42, "x", [1, 2]) is kept, anything else becomes a string.
+func tomlValue(text string) (raw string, value any) {
+	text = strings.TrimSpace(text)
+	if !strings.ContainsAny(text, "\r\n") {
+		if m, err := tomlLoad("x = " + text); err == nil {
+			if v, ok := m["x"]; ok && len(m) == 1 {
+				return text, v
+			}
+		}
+	}
+	return tomlQuote(text), text
 }
 
 // childTables lists the names directly under table in document order.
