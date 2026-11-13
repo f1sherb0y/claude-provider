@@ -2,7 +2,7 @@
 
 Switch between API providers for **Claude Code** and **Codex** from a terminal UI or the command line. Save your endpoints, keys, and model preferences once, then select a provider to update the tool's local configuration.
 
-This is the **Go implementation**, built on [tcell](https://github.com/gdamore/tcell). The interface and command help are in Chinese. Other implementations live on the [`rust`](https://github.com/f1sherb0y/claude-provider/tree/rust) and [`main`](https://github.com/f1sherb0y/claude-provider/tree/main) (Python) branches; all three share the same state file.
+This is the **Go implementation**, built on [tcell](https://github.com/gdamore/tcell). The interface and command help are in Chinese. The earlier implementations live on the [`rust`](https://github.com/f1sherb0y/claude-provider/tree/rust) and [`python`](https://github.com/f1sherb0y/claude-provider/tree/python) branches; all three share the same state file.
 
 ## Features
 
@@ -19,7 +19,7 @@ This is the **Go implementation**, built on [tcell](https://github.com/gdamore/t
 Requires Go 1.24 or newer.
 
 ```sh
-go install github.com/f1sherb0y/claude-provider/cmd/ccp@go
+go install github.com/f1sherb0y/claude-provider/cmd/ccp@latest
 ccp
 ```
 
@@ -28,7 +28,7 @@ This installs the `ccp` executable into `$(go env GOPATH)/bin`, which must be on
 ### From source
 
 ```sh
-git clone --branch go https://github.com/f1sherb0y/claude-provider.git
+git clone https://github.com/f1sherb0y/claude-provider.git
 cd claude-provider
 go build -o ccp ./cmd/ccp      # ccp.exe on Windows
 ```
