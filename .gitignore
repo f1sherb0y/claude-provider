@@ -1,7 +1,3 @@
-target/
-__pycache__/
-*.egg-info/
-*.pyc
-providers.json
-backups/
+/ccp
+/ccp.exe
 *.cp-tmp

@@ -1,52 +1,43 @@
-# Claude Provider · Rust
+# Claude Provider · Go
 
 Switch between API providers for **Claude Code** and **Codex** from a terminal UI or the command line. Save your endpoints, keys, and model preferences once, then select a provider to update the tool's local configuration.
 
-This is the **Rust implementation**, built with [Ratatui](https://ratatui.rs/) and [Crossterm](https://github.com/crossterm-rs/crossterm). The interface and command help are currently in Chinese. The Python implementation is available on the [`main` branch](https://github.com/f1sherb0y/claude-provider/tree/main).
+This is the **Go implementation**, built on [tcell](https://github.com/gdamore/tcell). The interface and command help are in Chinese. Other implementations live on the [`rust`](https://github.com/f1sherb0y/claude-provider/tree/rust) and [`main`](https://github.com/f1sherb0y/claude-provider/tree/main) (Python) branches; all three share the same state file.
 
 ## Features
 
 - Manage Claude Code and Codex providers in separate tabs.
-- Add, edit, duplicate, reorder, and switch providers with keyboard shortcuts.
+- Add, edit, duplicate, reorder, and switch providers with keyboard shortcuts or the mouse.
 - Import provider details from the clipboard, JSON, environment-variable snippets, or Codex TOML.
 - Import existing provider settings on first launch and keep entries for official login.
-- Set provider-specific models, Claude environment variables, and Codex authentication options.
-- Back up existing configuration files before changes and preserve unrelated settings.
+- Give a provider its own environment variables (proxy, CA bundle, ...), for both tools.
+- Keep a separate Codex login (`auth.json`) per login-type provider, so a local-proxy gateway and the real ChatGPT login can coexist.
+- Back up configuration files before changing them and leave unrelated settings, comments, and formatting alone.
 
 ## Installation
 
-Use a recent **stable Rust toolchain** with Cargo (the project uses Rust edition 2024), Git, and a terminal. Install Rust through [rustup](https://rustup.rs/), and install Claude Code and/or Codex separately for the tools you want to configure.
-
-Install directly from the `rust` branch:
+Requires Go 1.24 or newer.
 
 ```sh
-cargo install --git https://github.com/f1sherb0y/claude-provider.git --branch rust --locked claude-provider
+go install github.com/f1sherb0y/claude-provider/cmd/ccp@go
 ccp
 ```
 
-The package is named `claude-provider` and installs the `ccp` executable. Cargo's bin directory must be on your `PATH` (normally `~/.cargo/bin`, or `%USERPROFILE%\.cargo\bin` on Windows).
+This installs the `ccp` executable into `$(go env GOPATH)/bin`, which must be on your `PATH`.
 
-### Install from source
+### From source
 
 ```sh
-git clone --branch rust https://github.com/f1sherb0y/claude-provider.git
+git clone --branch go https://github.com/f1sherb0y/claude-provider.git
 cd claude-provider
-cargo install --path . --locked
-ccp
+go build -o ccp ./cmd/ccp      # ccp.exe on Windows
 ```
 
-To build locally and run without installing:
+The result is a single self-contained executable.
 
-```sh
-cargo build --release --locked
-cargo run --release --locked
-```
+### Coming from the Rust or Python version
 
-The compiled executable is `target/release/ccp` (`target\release\ccp.exe` on Windows). Once built, it runs without a Rust or Python runtime.
-
-### Existing Python installations
-
-The Rust implementation uses the same `~/.claude-provider/providers.json` state file and configuration directories as the Python implementation, including the older flat Claude-only state format. Back up your state before moving between versions. Both implementations use the command name `ccp`; check your `PATH` if the wrong one starts.
+The state file (`~/.claude-provider/providers.json`) and configuration directories are the same. This version adds fields to Codex providers that the older versions drop when they save, so use one implementation at a time; all of them install a command named `ccp`, so check which one is first on your `PATH`.
 
 ## Quick start
 
@@ -56,7 +47,7 @@ The Rust implementation uses the same `~/.claude-provider/providers.json` state 
 4. Press **Ctrl+S** to save, then **Enter** on the provider to apply it. Saving an entry alone does not activate it.
 5. Start a new Claude Code or Codex session to use the updated configuration.
 
-To return to official login, select `Anthropic 官方` or `OpenAI 官方 (ChatGPT 登录)`. Sign in through the corresponding tool if needed; this utility does not perform login.
+To return to official login, select `Anthropic 官方` or `OpenAI 官方 (ChatGPT 登录)`.
 
 ## Terminal UI
 
@@ -80,36 +71,32 @@ ccp --codex     # Open the Codex tab (also: ccp -x)
 | Shift+K / Shift+J | Move the selected entry up / down |
 | q | Quit |
 
-In the editor, **Ctrl+S** saves, **Esc** cancels, and **Ctrl+R** shows or hides the key.
+In the editor, **Ctrl+S** saves, **Esc** cancels, **Tab** moves between fields, and **Ctrl+R** shows or hides the key.
 
 ## Command line
 
-CLI subcommands target **Claude Code by default**, regardless of the last TUI tab. Put `--codex` / `-x` or `--claude` **before** the subcommand.
+CLI subcommands target **Claude Code by default**, regardless of the last TUI tab. Add `--codex` / `-x` for Codex.
 
 ```sh
 ccp list                         # List Claude providers; ls is an alias
 ccp current                      # Show the active Claude provider's name
 ccp use "My Claude"               # Switch by name
 ccp use 2                        # Switch by the 1-based list position
-ccp --codex list
+ccp -x list
 ccp -x use "My Codex"
 ccp rm "Old provider"             # Remove a saved entry immediately
 ccp --help
 ccp add --help
 ```
 
-`use` and `rm` accept a list position, an exact name, or a unique case-insensitive name prefix / name-or-URL substring. Prefer an exact name or position if a partial match is ambiguous. The active provider is marked with `●` in `list`.
+`use` and `rm` accept a list position, an exact name, or a unique case-insensitive name prefix / name-or-URL substring. The active provider is marked with `●` in `list`.
 
 ### Add a provider
-
-Replace the example URLs and keys with your provider's values:
 
 ```sh
 ccp add --name "My Claude" --url "https://api.example.com" --key "YOUR_API_KEY"
 ccp -x add --name "My Codex" --url "https://api.example.com/v1" --key "YOUR_API_KEY" --model "YOUR_MODEL_ID" --use
 ```
-
-`--use` applies the provider immediately after adding it. Without it, the command only saves the entry. Adding the same URL and key again reuses the existing entry.
 
 | Option | Purpose |
 | --- | --- |
@@ -119,9 +106,10 @@ ccp -x add --name "My Codex" --url "https://api.example.com/v1" --key "YOUR_API_
 | `--url` | Set the base URL |
 | `--key` | Set the API key or token |
 | `--model` | Set an optional model |
+| `--env KEY=VALUE` | Add an environment variable the provider needs (repeatable) |
 | `--use` | Activate the resulting provider |
 
-Explicit options override parsed values. CLI `add` requires both a URL and a key. Use the TUI for advanced fields such as Claude's key variable and extra environment variables, or Codex's provider ID, `wire_api`, and `env_key`.
+Explicit options override parsed values. An endpoint needs both a URL and a key. A provider given only `--env` values is a *login-type* provider: the tool keeps using its built-in endpoint and sign-in, with those variables set. Adding a provider identical to a saved one reuses the existing entry.
 
 Keys passed with `--key` may appear in shell history. The TUI, clipboard import, and standard input avoid putting the key in the command itself.
 
@@ -129,47 +117,10 @@ Keys passed with `--key` may appear in shell history. The TUI, clipboard import,
 
 ```sh
 ccp add --clip --name "Imported Claude"
-ccp -x add --clip --name "Imported Codex"
-```
-
-Read a file through standard input:
-
-```powershell
-# Windows PowerShell
-Get-Content -Raw provider.json | ccp add -
-Get-Content -Raw provider.toml | ccp -x add -
-```
-
-```sh
-# macOS / Linux
-ccp add - < provider.json
 ccp -x add - < provider.toml
 ```
 
-Both backends accept generic JSON:
-
-```json
-{
-  "name": "Example provider",
-  "url": "https://api.example.com/v1",
-  "key": "YOUR_API_KEY",
-  "model": "YOUR_MODEL_ID"
-}
-```
-
-Claude also accepts a `settings.json` object with an `env` section, a flat environment-variable JSON object, or environment assignments:
-
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "https://api.example.com",
-    "ANTHROPIC_AUTH_TOKEN": "YOUR_API_KEY",
-    "ANTHROPIC_MODEL": "YOUR_MODEL_ID"
-  }
-}
-```
-
-Codex accepts `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and optional `OPENAI_MODEL` assignments, or a TOML snippet:
+Both backends accept generic JSON (`{"name": ..., "url": ..., "key": ..., "model": ...}`). Claude also accepts a `settings.json` object with an `env` section, a flat environment-variable JSON object, or environment assignments. Codex accepts `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and optional `OPENAI_MODEL` assignments, or a TOML snippet:
 
 ```toml
 model = "YOUR_MODEL_ID"
@@ -181,55 +132,75 @@ wire_api = "responses"
 experimental_bearer_token = "YOUR_API_KEY"
 ```
 
-Environment snippets support Bash `export KEY=VALUE`, PowerShell `$env:KEY="VALUE"`, cmd `set KEY=VALUE`, and plain `KEY=VALUE` lines. A pasted Codex TOML snippet imports the first provider table; first-launch discovery reads all existing tables.
+Environment snippets support Bash `export KEY=VALUE`, PowerShell `$env:KEY="VALUE"`, cmd `set KEY=VALUE`, and plain `KEY=VALUE` lines.
 
 ## Configuration behavior
 
-| Tool | What switching changes |
+### Claude Code
+
+Switching updates provider-related variables in `settings.json`'s `env` object: it clears the endpoint, key, and model overrides of the previous provider, sets the new ones, and restores any of your own values that the previous provider's extra variables had overridden. The rest of the file is preserved.
+
+Claude defaults to `ANTHROPIC_AUTH_TOKEN`; choose `ANTHROPIC_API_KEY` in the editor if your setup needs it. URLs have a trailing `/v1`, `/messages`, or `/v1/messages` removed.
+
+### Codex
+
+Switching touches up to three files in `~/.codex`:
+
+| File | What changes |
 | --- | --- |
-| Claude Code | Updates provider-related variables in `settings.json`'s `env` object. Clears managed endpoint, key, and model overrides from the previous provider, preserves unrelated settings, and restores unrelated environment values temporarily overridden by a saved provider. |
-| Codex | Updates `model_provider` and the selected `[model_providers.<id>]` table in `config.toml`, preserving unrelated TOML settings and comments. A nonempty provider model updates the top-level `model`; an empty model leaves it unchanged. |
+| `config.toml` | `model_provider` is set to the provider's ID (`openai` for a login-type provider), and an endpoint's `[model_providers.<id>]` table is created or updated in place. A nonempty provider model sets the top-level `model`. Edits are made on the text of the file: comments, ordering, and every other setting stay as they are, and the result is re-parsed and checked before it is written. |
+| `.env` | The provider's extra variables are written into a `# BEGIN ccp (managed)` block. Variables that belonged to another saved provider are removed — including identical lines that provider's own installer wrote — and values of yours that they had overridden are restored. A provider with `env_key` gets its key here instead of in `config.toml`. |
+| `auth.json` | Only for login-type providers; see below. |
 
-Claude defaults to `ANTHROPIC_AUTH_TOKEN`; choose `ANTHROPIC_API_KEY` in the editor if your setup needs it. Claude URLs have trailing `/v1`, `/messages`, or `/v1/messages` removed. Codex URLs have trailing `/responses` or `/chat/completions` removed, retaining an API-root `/v1` when present.
+Codex URLs have a trailing `/responses` or `/chat/completions` removed. `wire_api` defaults to `responses`. Tables of providers you are not using are left in `config.toml`.
 
-Codex defaults to `wire_api = "responses"`; the editor also offers `chat`. Choose a value supported by your installed Codex version and endpoint. By default, the key is written to `experimental_bearer_token`. Setting `env_key` instead writes the variable name to the provider table and a nonempty key to Codex's `.env` file.
+#### Login-type providers and `auth.json`
 
-Selecting the built-in official Claude entry clears managed provider overrides. Selecting the official Codex entry removes the top-level `model_provider` override and keeps the current model. Existing login credentials are left in place.
+A provider with an empty Base URL uses Codex's built-in `openai` provider and whatever `auth.json` signs in as. There can be several: the official ChatGPT login, and for example a gateway that installs a local proxy plus a placeholder login. They are told apart by their extra variables (the entry whose variables are all present in `.env`, most specific first, is the active one).
 
-Deleting an entry removes it from this utility's saved list. It does not undo the active configuration or remove previously written credentials or Codex provider tables; switch to another provider first if you want to stop using it.
+Each of them keeps its own copy of `auth.json` in `~/.claude-provider/codex-auth/<id>.json`:
 
-### Files and backups
+- Before switching, the `auth.json` in place is saved to the login it belongs to (matched by account), because Codex refreshes tokens in that file.
+- Switching to a login puts its saved `auth.json` back.
+- Switching to a login that has never been saved while another login's file is in place moves that file away, so Codex asks you to run `codex login` rather than use the wrong credentials.
+- Switching to an endpoint leaves `auth.json` alone.
+
+This utility never performs a login itself.
+
+### Deleting
+
+Deleting an entry removes it from the saved list. It does not undo the active configuration or remove credentials, provider tables, or login snapshots already written; switch to another provider first if you want to stop using it.
+
+## Files and backups
 
 `~` means your user home directory, such as `C:\Users\you` on Windows.
 
 | File | Purpose | Directory override |
 | --- | --- | --- |
 | `~/.claude-provider/providers.json` | Saved providers, keys, ordering, and last-used tab | `CLAUDE_PROVIDER_HOME` |
-| `~/.claude-provider/backups/` | Timestamped copies of configuration files before writes | `CLAUDE_PROVIDER_HOME` |
+| `~/.claude-provider/codex-auth/` | One saved `auth.json` per Codex login-type provider | `CLAUDE_PROVIDER_HOME` |
+| `~/.claude-provider/backups/` | Timestamped copies of files before they are changed | `CLAUDE_PROVIDER_HOME` |
 | `~/.claude/settings.json` | Claude Code configuration | `CLAUDE_CONFIG_DIR` |
-| `~/.codex/config.toml` | Codex configuration | `CODEX_HOME` |
-| `~/.codex/.env` | Codex keys when a provider uses `env_key` | `CODEX_HOME` |
+| `~/.codex/config.toml`, `.env`, `auth.json` | Codex configuration and login | `CODEX_HOME` |
 
-Set directory overrides before launching the utility. `CLAUDE_PROVIDER_HOME` relocates its saved state and backups; the tool configuration directories use their own overrides.
+Files are backed up before modification, with the newest **20 backups per file** retained, and written atomically.
 
-Existing target files are backed up before modification, with the newest **20 backups per filename pattern** retained. To restore one, close the utility and copy the chosen backup over its original file, then start a new tool session.
-
-**Keys are stored in plain text.** Masking in the UI is only for display. Saved providers, target configuration files, and backups can contain credentials; keep them out of version control and shared folders.
+**Keys are stored in plain text.** Masking in the UI is only for display. Saved providers, login snapshots, target configuration files, and backups contain credentials; keep them out of version control and shared folders.
 
 ## Troubleshooting
 
-- **Cargo reports an unsupported edition or compiler version:** Update the stable toolchain with `rustup update stable` and build with that toolchain.
-- **`ccp` is not found:** Add Cargo's bin directory to your `PATH` and reopen your terminal, or run the executable from `target/release` after building locally.
+- **`ccp` is not found, or the wrong version starts:** Put `$(go env GOPATH)/bin` on your `PATH`, ahead of other installations of `ccp`.
 - **Clipboard import does not work:** Paste the snippet into the editor's top box or use standard input with `add -`.
-- **A switch is not reflected in your tool:** Start a new session and check that both the utility and the tool use the same configuration directory. Check for overrides in the shell or other tool configuration.
-- **The current provider is unknown:** The active configuration may not match a saved entry. Import it explicitly or reapply a saved provider. Initial discovery runs when backend state is first created; it does not continuously import later edits.
+- **A switch is not reflected in your tool:** Start a new session and check that both the utility and the tool use the same configuration directory.
+- **The current provider is unknown:** The active configuration does not match a saved entry. Reapply a saved provider. Initial discovery runs only when the state file is first created.
+- **Codex says "model_providers … 是内联表":** `config.toml` defines providers as an inline table or dotted keys, which cannot be extended safely. Rewrite it as `[model_providers.<id>]` tables.
 
 ## Development
 
 ```sh
-cargo test --locked --all-targets
-cargo build --release --locked
-cargo run --locked -- --help
+go test ./...
+go vet ./...
+go build -o ccp ./cmd/ccp
 ```
 
-`Cargo.lock` is committed so builds can use the recorded dependency versions. The source is organized into CLI (`src/cli.rs`), shared provider/state handling (`src/backend.rs`, `src/store.rs`, and `src/common.rs`), tool backends (`src/claude.rs` and `src/codex.rs`), and terminal UI (`src/tui/`).
+Everything is one `main` package in `cmd/ccp`: CLI (`cli.go`), provider/state handling (`backend.go`, `store.go`, `common.go`), tool backends (`claude.go`; `codex.go` with `tomledit.go` and `dotenv.go`), and the terminal UI (`tui*.go`). `ccp __render 100x30 [keys...]` prints the screen a scripted session ends on, which is how the UI is tested without a terminal.
